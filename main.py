@@ -18,6 +18,9 @@ ELASTICSEARCH_URL = "http://localhost:9200"
 INDEX_NAME = "documents"
 
 CLASSIFY_INTENT_PROMPT = """Classify the following query either in one of the following commands: 'add_document', 'remove_document', 'search_document'.
+- If the query is formatted as 'doc_id | title | content', classify it as 'add_document'.
+- If the query is formatted as 'remove | doc_id', classify it as 'remove_document'.
+- If the query asks information for a document/article or retrieving a document/article, classify it as 'search_document'
 In all other cases, classify it as 'answer_question'. Please return only the intent and nothing else.
 
 Query: {query_input}
@@ -42,9 +45,9 @@ class AgentState(TypedDict):
     response: Optional[str]
 
 class DocumentRequest(BaseModel):
-    doc_id: Optional[str] = None
-    title: Optional[str] = None
-    content: Optional[str] = None
+    doc_id: str
+    title: str
+    content: str
 
 
 # Hybrid Search: BM25 + Vector Search
@@ -80,22 +83,31 @@ def hybrid_search(query):
 def add_document(state: AgentState) -> AgentState:
     """Adds a document to Elasticsearch."""
     logger.info(f"Adding document with input: {state['user_input']}")
-    content = state["user_input"].split("|", 1)  # Format: "doc_id | content"
-    if len(content) < 2:
-        return {"response": "Invalid format! Use: doc_id | content"}
-    doc_id, text = content
-    embedding = embeddings.encode(text)
-    es.index(index=INDEX_NAME, id=doc_id, body={"content": text, "embedding": embedding})
+    content_parts = state["user_input"].split("|")
+    if len(content_parts) < 3:
+        return {"response": "Invalid format! Use: doc_id | title | content"}
+    
+    doc_id = content_parts[0].strip()
+    title = content_parts[1].strip()
+    content = content_parts[2].strip()
+    document = {
+        "content": content,
+        "title": title,
+        "embedding": embeddings.encode(content)  # Assuming you want to store embeddings as well
+    }
+    es.index(index=INDEX_NAME, id=doc_id, body=document)
     logger.info(f"Document '{doc_id}' added.")
-    return {"response": f"Document '{doc_id}' added."}
+    return {"response":  f"Document '{title}' added with ID '{doc_id}'."}
+
 
 def remove_document(state: AgentState) -> AgentState:
     """Removes a document from Elasticsearch."""
     logger.info(f"Removing document with ID: {state['user_input']}")
-    doc_id = state["user_input"].strip()
+    doc_id = state["user_input"].split("|")[1]
     es.delete(index=INDEX_NAME, id=doc_id)
     logger.info(f"Document '{doc_id}' removed.")
     return {"response": f"Document '{doc_id}' removed."}
+
 
 def search_document(state: AgentState) -> AgentState:
     """Finds documents in Elasticsearch based on a query."""
@@ -107,6 +119,7 @@ def search_document(state: AgentState) -> AgentState:
         return {"retrieved_docs": [], "response": "No matching documents found."}
     logger.info(f"Found {len(docs)} documents.")
     return {"retrieved_docs": docs, "response": "Documents found!"}
+
 
 def answer_question(state: AgentState) -> AgentState:
     """Answers a question using RAG from retrieved documents."""
@@ -123,6 +136,7 @@ def answer_question(state: AgentState) -> AgentState:
     logger.info(f"Generated response: {response}")
     return {"response": response}
 
+
 def classify_intent(state: AgentState) -> str:
     """Classifies user intent based on input using LLM."""
     logger.info(f"Classifying intent for input: {state['user_input']}")
@@ -132,6 +146,7 @@ def classify_intent(state: AgentState) -> str:
     if intent not in ["add_document", "remove_document", "search_document", "answer_question"]:
         intent = "answer_question"
     return {"intent": intent}    
+
 
 # Build LangGraph
 workflow = StateGraph(AgentState)
@@ -167,6 +182,7 @@ workflow.add_edge("search_document", END)  # This will now also lead to answer_q
 # Compile workflow
 workflow = workflow.compile()
 
+
 # FastAPI integration
 app = FastAPI()
 
@@ -176,14 +192,22 @@ def process_request(user_input: str):
     result = workflow.invoke({"user_input": user_input})
     return {"response": result.get("response", "No response")}
 
+
 @app.post("/add_document")
 def add_document_api(request: DocumentRequest):
     logger.info(f"API call: add_document with {request}")
-    if not request.doc_id or not request.content:
-        raise HTTPException(status_code=400, detail="doc_id and content are required")
-    embedding = embeddings.encode(request.content)
-    result = es.index(index=INDEX_NAME, id=request.doc_id, body={"content": request.content, "embedding": embedding})
-    return {"response": result}
+    if not request.doc_id or not request.content or not request.title:
+        raise HTTPException(status_code=400, detail="doc_id, content, and title are required")
+    # Create a document dictionary
+    document = {
+        "id": request.doc_id,
+        "content": request.content,
+        "title": request.title,
+        "embedding": embeddings.encode(request.content)  # Assuming you want to store embeddings as well
+    }
+    es.index(index=INDEX_NAME, id=request.doc_id, body=document)
+    return {"response": f"Document '{request.title}' added with ID '{request.doc_id}'."}
+
 
 @app.post("/remove_document")
 def remove_document_api(request: DocumentRequest):
@@ -192,6 +216,7 @@ def remove_document_api(request: DocumentRequest):
         raise HTTPException(status_code=400, detail="doc_id is required")
     result = es.delete(index=INDEX_NAME, id=request.doc_id)
     return {"response": result}
+
 
 @app.post("/search_document")
 def search_document_api(query: str):
@@ -205,6 +230,7 @@ def search_document_api(query: str):
     logger.info(f"Found {len(docs)} documents.")
     logger.info(f"Found documents. {docs}")
     return {"retrieved_docs": docs, "response": "Documents found!"}
+
 
 @app.get("/")
 def home():
