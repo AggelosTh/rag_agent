@@ -1,4 +1,3 @@
-import os
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from langchain_ollama import OllamaLLM
@@ -12,9 +11,8 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-
 # Initialize components
-llm = OllamaLLM(model="llama3.1")
+llm = OllamaLLM(model="llama3.1", temperature=0.0)
 
 ELASTICSEARCH_URL = "http://localhost:9200"
 INDEX_NAME = "documents"
@@ -34,7 +32,7 @@ PROMPT_FOR_QA = """
     Answer:
 """
 
-embeddings = SentenceTransformer("all-MiniLM-L6-v2")
+embeddings = SentenceTransformer("all-MiniLM-L6-v2", device='cuda')
 
 es = Elasticsearch(ELASTICSEARCH_URL)
 
@@ -106,17 +104,20 @@ def search_document(state: AgentState) -> AgentState:
     docs = hybrid_search(query=query)
     if not docs:
         logger.info("No matching documents found.")
-        return {"response": "No matching documents found."}
+        return {"retrieved_docs": [], "response": "No matching documents found."}
     logger.info(f"Found {len(docs)} documents.")
-    logger.info(f"Found documents. {docs}")
     return {"retrieved_docs": docs, "response": "Documents found!"}
 
 def answer_question(state: AgentState) -> AgentState:
     """Answers a question using RAG from retrieved documents."""
-    logger.info(f"Answering question: {state['user_input']}")
-    query = state["user_input"].strip()
-    docs = hybrid_search(query=query)
-    context = "\n".join([doc for doc in docs])
+    logger.info(f"Answering question with retrieved documents.")
+    # Retrieve documents from state (assuming they are stored under 'retrieved_docs')
+    docs = state.get("retrieved_docs", [])
+    if not docs:
+        logger.info("No documents found for answering the question.")
+        return {"response": "No documents found to provide an answer."}
+    context = "\n".join(docs)  # Join documents into a single context string
+    query = state["user_input"].strip() 
     prompt = PROMPT_FOR_QA.format(context=context, query=query)
     response = llm(prompt)
     logger.info(f"Generated response: {response}")
@@ -134,28 +135,36 @@ def classify_intent(state: AgentState) -> str:
 
 # Build LangGraph
 workflow = StateGraph(AgentState)
+
+# Add nodes
 workflow.add_node("classify_intent", classify_intent)
 workflow.add_node("add_document", add_document)
 workflow.add_node("remove_document", remove_document)
 workflow.add_node("search_document", search_document)
 workflow.add_node("answer_question", answer_question)
+
+# Add conditional edges
 workflow.add_conditional_edges(
     "classify_intent",
-    lambda state: state["intent"],  # Use the 'intent' key from the returned dictionary
+    lambda state: state["intent"],  # Use 'intent' key from classify_intent's output
     {
         "add_document": "add_document",
         "remove_document": "remove_document",
         "search_document": "search_document",
-        "answer_question": "answer_question"
+        "answer_question": "search_document"  # Route answer_question through search_document
     }
 )
 
+# Add an edge from search_document to answer_question
+workflow.add_edge("search_document", "answer_question")
+
+# Set entry point and terminal edges
 workflow.set_entry_point("classify_intent")
 workflow.add_edge("add_document", END)
 workflow.add_edge("remove_document", END)
-workflow.add_edge("search_document", END)
-workflow.add_edge("answer_question", END)
+workflow.add_edge("search_document", END)  # This will now also lead to answer_question
 
+# Compile workflow
 workflow = workflow.compile()
 
 # FastAPI integration
