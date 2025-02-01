@@ -17,15 +17,17 @@ llm = OllamaLLM(model="llama3.1", temperature=0.0)
 ELASTICSEARCH_URL = "http://localhost:9200"
 INDEX_NAME = "documents"
 
-CLASSIFY_INTENT_PROMPT = """Classify the following query either in one of the following commands: 'add_document', 'remove_document', 'search_document'.
-- If the query is formatted as 'doc_id | title | content', classify it as 'add_document'.
-- If the query is formatted as 'remove | doc_id', classify it as 'remove_document'.
-- If the query asks information for a document/article or retrieving a document/article, classify it as 'search_document'
+CLASSIFY_INTENT_PROMPT = """Classify the following query into one of the following commands: 
+- 'add_document' (if the format is 'doc_id | title | content')
+- 'remove_document' (if the format is 'remove | doc_id')
+- 'update_document' (if the format is 'update | doc_id | new_title | [optional new_content]')
+- 'search_document' (if the query is asking for information retrieval)
 In all other cases, classify it as 'answer_question'. Please return only the intent and nothing else.
 
 Query: {query_input}
 Intent:
 """
+
 
 PROMPT_FOR_QA = """
     Use the following context to answer the question:
@@ -43,12 +45,19 @@ class AgentState(TypedDict):
     user_input: str
     retrieved_docs: Optional[list]
     response: Optional[str]
+    doc_id: Optional[str]
+    new_title: Optional[str]
+    new_content: Optional[str]
 
 class DocumentRequest(BaseModel):
     doc_id: str
     title: str
     content: str
 
+class UpdateDocumentRequest(BaseModel):
+    doc_id: str
+    new_title: str
+    new_content: Optional[str] = None
 
 # Hybrid Search: BM25 + Vector Search
 def hybrid_search(query):
@@ -68,7 +77,8 @@ def hybrid_search(query):
                             }
                         }
                     }
-                ]
+                ],
+                "minimum_should_match": 1  # Ensure at least one condition matches
             }
         }
     }
@@ -121,6 +131,32 @@ def search_document(state: AgentState) -> AgentState:
     return {"retrieved_docs": docs, "response": "Documents found!"}
 
 
+def update_document(state: AgentState) -> AgentState:
+    """Updates a document in Elasticsearch."""
+    logger.info(f"Updating document with input: {state['user_input']}")
+    parts = state["user_input"].split("|")
+    if len(parts) < 3:
+        return {"response": "Invalid format! Use: update | doc_id | new_title | [optional new_content]"}
+    doc_id = parts[1].strip()
+    new_title = parts[2].strip()
+    new_content = parts[3].strip() if len(parts) > 3 else None
+
+    # Fetch the existing document
+    try:
+        existing_doc = es.get(index=INDEX_NAME, id=doc_id)["_source"]
+    except:
+        return {"response": f"Document with ID '{doc_id}' not found."}
+    # Prepare updated fields
+    updated_doc = {
+        "title": new_title,
+        "content": new_content if new_content else existing_doc["content"],  # Keep old content if not provided
+        "embedding": embeddings.encode(new_content) if new_content else existing_doc["embedding"]
+    }
+    es.index(index=INDEX_NAME, id=doc_id, body=updated_doc)
+    logger.info(f"Document '{doc_id}' updated successfully.")
+    return {"response": f"Document '{doc_id}' updated successfully with new title '{new_title}'."}
+
+
 def answer_question(state: AgentState) -> AgentState:
     """Answers a question using RAG from retrieved documents."""
     logger.info(f"Answering question with retrieved documents.")
@@ -143,7 +179,7 @@ def classify_intent(state: AgentState) -> str:
     prompt = CLASSIFY_INTENT_PROMPT.format(query_input=state['user_input'])
     intent = llm(prompt).strip().lower()
     logger.info(f"Classified intent: {intent}")
-    if intent not in ["add_document", "remove_document", "search_document", "answer_question"]:
+    if intent not in ["add_document", "remove_document", "search_document", "update_document", "answer_question"]:
         intent = "answer_question"
     return {"intent": intent}    
 
@@ -156,6 +192,7 @@ workflow.add_node("classify_intent", classify_intent)
 workflow.add_node("add_document", add_document)
 workflow.add_node("remove_document", remove_document)
 workflow.add_node("search_document", search_document)
+workflow.add_node("update_document", update_document)
 workflow.add_node("answer_question", answer_question)
 
 # Add conditional edges
@@ -166,6 +203,7 @@ workflow.add_conditional_edges(
         "add_document": "add_document",
         "remove_document": "remove_document",
         "search_document": "search_document",
+        "update_document": "update_document",
         "answer_question": "search_document"  # Route answer_question through search_document
     }
 )
@@ -177,6 +215,7 @@ workflow.add_edge("search_document", "answer_question")
 workflow.set_entry_point("classify_intent")
 workflow.add_edge("add_document", END)
 workflow.add_edge("remove_document", END)
+workflow.add_edge("update_document", END)
 workflow.add_edge("search_document", END)  # This will now also lead to answer_question
 
 # Compile workflow
@@ -216,6 +255,24 @@ def remove_document_api(request: DocumentRequest):
         raise HTTPException(status_code=400, detail="doc_id is required")
     result = es.delete(index=INDEX_NAME, id=request.doc_id)
     return {"response": result}
+
+
+@app.post("/update_document")
+def update_document_api(request: UpdateDocumentRequest):
+    logger.info(f"API call: update_document with {request}")
+    try:
+        existing_doc = es.get(index=INDEX_NAME, id=request.doc_id)["_source"]
+    except:
+        raise HTTPException(status_code=404, detail=f"Document with ID '{request.doc_id}' not found.")
+
+    updated_doc = {
+        "title": request.new_title,
+        "content": request.new_content if request.new_content else existing_doc["content"],
+        "embedding": embeddings.encode(request.new_content) if request.new_content else existing_doc["embedding"]
+    }
+
+    es.index(index=INDEX_NAME, id=request.doc_id, body=updated_doc)
+    return {"response": f"Document '{request.doc_id}' updated successfully with new title '{request.new_title}'."}
 
 
 @app.post("/search_document")
