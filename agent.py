@@ -2,7 +2,7 @@ from typing import Optional, TypedDict
 from langgraph.graph import StateGraph, END
 from langchain_ollama import OllamaLLM
 from sentence_transformers import SentenceTransformer
-from config import CLASSIFY_INTENT_PROMPT, PROMPT_FOR_QA
+from config import CLASSIFY_INTENT_PROMPT, PROMPT_FOR_QA, EMBEDDINGS_MODEL
 from services.text_utils import hybrid_search
 import logging
 
@@ -17,6 +17,7 @@ class AgentState(TypedDict):
     doc_id: Optional[str]
     new_title: Optional[str]
     new_content: Optional[str]
+    intent: Optional[str]
 
 
 class Agent:
@@ -25,13 +26,12 @@ class Agent:
         self.es = es
         self.index_name = index_name
         self.llm = OllamaLLM(model=llm_model, temperature=0.0)
-        self.embeddings = SentenceTransformer("all-MiniLM-L6-v2", device="cuda")
+        self.embeddings = SentenceTransformer(EMBEDDINGS_MODEL, device="cuda")
+        
+        self.workflow = self._build_workflow(
 
-        # Build the LangGraph workflow
-        # self.workflow = self._build_workflow()
-
-    # def _build_workflow(self):
-        """Constructs the LangGraph workflow for processing queries."""
+        )
+    def _build_workflow(self):
         workflow = StateGraph(AgentState)
 
         # Nodes
@@ -42,7 +42,7 @@ class Agent:
         workflow.add_node("update_document", self.update_document)
         workflow.add_node("answer_question", self.answer_question)
 
-        # # # Add conditional edges
+        # Add conditional edges
         workflow.add_conditional_edges(
             "classify_intent",
             lambda state: state["intent"],
@@ -51,25 +51,29 @@ class Agent:
                 "remove_document": "remove_document",
                 "search_document": "search_document",
                 "update_document": "update_document",
-                "answer_question": "search_document"  # Route answer_question through search_document
+                "answer_question": "search_document",  # Route answer_question through search_document
             }
         )
-        # workflow.add_conditional_edges(
-        #     "search_document", self.is_answer_question, {True: "answer_question", False: END}
-        # )
 
+        # Only transition if the intent is specifically 'answer_question'
+        workflow.add_conditional_edges(
+            "search_document",
+            lambda state: self.is_answer_question(state),
+            {True: "answer_question", False: END}  # If not answer_question, stop after search
+        )
+
+        # Define edges for other actions
         workflow.add_edge("add_document", END)
         workflow.add_edge("remove_document", END)
         workflow.add_edge("update_document", END)
-        workflow.add_edge("search_document", END)
-        # workflow.add_edge("search_document", "answer_question")
-        workflow.add_edge("answer_question", END)
+        workflow.add_edge("answer_question", END)  # Answer question ends after execution
 
+        # Set entry point for the workflow
         workflow.set_entry_point("classify_intent")
 
-        self.workflow = workflow.compile()
-
-
+        workflow = workflow.compile()
+        return workflow
+    
     def classify_intent(self, state: AgentState):
         """Classifies user intent based on input using LLM."""
         logger.info(f"Classifying intent for input: {state['user_input']}")
@@ -80,8 +84,9 @@ class Agent:
             intent = "answer_question"
         return {"intent": intent}   
 
-    def is_answer_question(self, intent: str):
-        return intent == "answer_question"
+    def is_answer_question(self, state: AgentState):
+        logger.info(f"The intent is {state['intent']}")
+        return bool(state["intent"] == "answer_question")
 
     def add_document(self, state: AgentState):
         """Adds a document to Elasticsearch."""
@@ -102,7 +107,6 @@ class Agent:
         logger.info(f"Document '{doc_id}' added.")
         return {"response":  f"Document '{title}' added with ID '{doc_id}'."}
 
-
     def remove_document(self, state: AgentState):
         """Removes a document from Elasticsearch."""
         logger.info(f"Removing document with ID: {state['user_input']}")
@@ -110,7 +114,6 @@ class Agent:
         self.es.delete(index=self.index_name, id=doc_id)
         logger.info(f"Document '{doc_id}' removed.")
         return {"response": f"Document '{doc_id}' removed."}
-
 
     def search_document(self, state: AgentState):
         """Finds documents in Elasticsearch based on a query."""
@@ -121,8 +124,7 @@ class Agent:
             logger.info("No matching documents found.")
             return {"retrieved_docs": [], "response": "No matching documents found."}
         logger.info(f"Found {len(docs)} documents.")
-        return {"response": docs[0]}
-
+        return {"retrieved_docs": docs, "intent": state["intent"]}
 
     def update_document(self, state: AgentState):
         """Updates a document in Elasticsearch."""
@@ -149,7 +151,6 @@ class Agent:
         logger.info(f"Document '{doc_id}' updated successfully.")
         return {"response": f"Document '{doc_id}' updated successfully with new title '{new_title}'."}
 
-
     def answer_question(self, state: AgentState):
         """Answers a question using RAG from retrieved documents."""
         logger.info(f"Answering question with retrieved documents.")
@@ -165,14 +166,7 @@ class Agent:
         logger.info(f"Generated response: {response}")
         return {"response": response}
 
-
     def process_input(self, user_input: str):
         """Runs the user input through the LangGraph workflow."""
         result = self.workflow.invoke({"user_input": user_input})
         return result.get("response", "No response")
-
-
-# # Example Usage
-# if __name__ == "__main__":
-#     agent = Agent()
-#     print(agent.process_input("Find me documents about AI"))
