@@ -1,6 +1,8 @@
 ELASTICSEARCH_URL = "http://localhost:9200"
 INDEX_NAME = "documents"
 LLM_MODEL = "llama3.1"
+# EMBEDDINGS_MODEL = "all-MiniLM-L6-v2"
+EMBEDDINGS_MODEL = "BAAI/bge-large-en"
 
 CLASSIFY_INTENT_PROMPT = """Classify the following query into one of the following commands: 
 - 'add_document' (if the format is 'doc_id | title | content')
