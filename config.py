@@ -1,5 +1,5 @@
 ELASTICSEARCH_URL = "http://localhost:9200"
-INDEX_NAME = "documents"
+INDEX_NAME = "chunks"
 LLM_MODEL = "llama3.1"
 # EMBEDDINGS_MODEL = "all-MiniLM-L6-v2"
 EMBEDDINGS_MODEL = "BAAI/bge-large-en"
