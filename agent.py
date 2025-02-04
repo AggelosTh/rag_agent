@@ -127,7 +127,7 @@ class Agent:
                 }
             }
         }
-        self.es.delete(index=self.index_name, body=body)
+        self.es.delete_by_query(index=self.index_name, body=body)
         logger.info(f"Document '{doc_id}' removed.")
         return {"response": f"Document '{doc_id}' removed."}
 

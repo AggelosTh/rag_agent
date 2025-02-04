@@ -63,7 +63,7 @@ def remove_document_api(request: DocumentRequest):
             }
         }
     }
-    result = es.delete(index=INDEX_NAME, body=body)
+    result = es.delete_by_query(index=INDEX_NAME, body=body)
     return {"response": result}
 
 
