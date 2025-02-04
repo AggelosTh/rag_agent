@@ -1,5 +1,5 @@
 ELASTICSEARCH_URL = "http://localhost:9200"
-INDEX_NAME = "documents"
+INDEX_NAME = "chunks"
 LLM_MODEL = "llama3.1"
 # EMBEDDINGS_MODEL = "all-MiniLM-L6-v2"
 EMBEDDINGS_MODEL = "BAAI/bge-large-en"
@@ -21,4 +21,22 @@ PROMPT_FOR_QA = """
     
     Question: {query}
     Answer:
+"""
+
+PROMPT_FOR_SUMMARY = """
+Summarize the following document in a concise manner, keeping key information:
+
+Document:
+{document}
+
+Summary:
+"""
+
+PROMPT_FOR_MERGING_SUMMARIES = """
+Given the following document summaries, generate a final structured response that combines key points, removes redundancy, and ensures coherence:
+
+Summaries:
+{summaries}
+
+Final Answer:
 """

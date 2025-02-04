@@ -2,8 +2,8 @@ from typing import Optional, TypedDict
 from langgraph.graph import StateGraph, END
 from langchain_ollama import OllamaLLM
 from sentence_transformers import SentenceTransformer
-from config import CLASSIFY_INTENT_PROMPT, PROMPT_FOR_QA, EMBEDDINGS_MODEL
-from services.text_utils import hybrid_search
+from config import CLASSIFY_INTENT_PROMPT, PROMPT_FOR_QA, EMBEDDINGS_MODEL, PROMPT_FOR_SUMMARY, PROMPT_FOR_MERGING_SUMMARIES
+from services.text_utils import hybrid_search, chunk_text
 import logging
 
 # Initialize logging
@@ -18,6 +18,9 @@ class AgentState(TypedDict):
     new_title: Optional[str]
     new_content: Optional[str]
     intent: Optional[str]
+    summaries: Optional[str]
+    summarized_docs: Optional[str]
+
 
 
 class Agent:
@@ -31,18 +34,21 @@ class Agent:
         self.workflow = self._build_workflow(
 
         )
+
     def _build_workflow(self):
         workflow = StateGraph(AgentState)
 
-        # Nodes
+        # Add nodes (same as before)
         workflow.add_node("classify_intent", self.classify_intent)
         workflow.add_node("add_document", self.add_document)
         workflow.add_node("remove_document", self.remove_document)
         workflow.add_node("search_document", self.search_document)
         workflow.add_node("update_document", self.update_document)
+        workflow.add_node("summarize_documents", self.summarize_documents)
+        workflow.add_node("merge_summaries", self.merge_summaries)
         workflow.add_node("answer_question", self.answer_question)
 
-        # Add conditional edges
+        # Conditional edges from classify_intent
         workflow.add_conditional_edges(
             "classify_intent",
             lambda state: state["intent"],
@@ -51,22 +57,20 @@ class Agent:
                 "remove_document": "remove_document",
                 "search_document": "search_document",
                 "update_document": "update_document",
-                "answer_question": "search_document",  # Route answer_question through search_document
+                "answer_question": "search_document",
             }
         )
 
-        # Only transition if the intent is specifically 'answer_question'
-        workflow.add_conditional_edges(
-            "search_document",
-            lambda state: self.is_answer_question(state),
-            {True: "answer_question", False: END}  # If not answer_question, stop after search
-        )
+        # Linear flow for question answering
+        workflow.add_edge("search_document", "summarize_documents")
+        workflow.add_edge("summarize_documents", "merge_summaries")
+        workflow.add_edge("merge_summaries", "answer_question")
+        workflow.add_edge("answer_question", END)
 
-        # Define edges for other actions
+        # Direct edges for other actions
         workflow.add_edge("add_document", END)
         workflow.add_edge("remove_document", END)
         workflow.add_edge("update_document", END)
-        workflow.add_edge("answer_question", END)  # Answer question ends after execution
 
         # Set entry point for the workflow
         workflow.set_entry_point("classify_intent")
@@ -87,7 +91,7 @@ class Agent:
     def is_answer_question(self, state: AgentState):
         logger.info(f"The intent is {state['intent']}")
         return bool(state["intent"] == "answer_question")
-
+    
     def add_document(self, state: AgentState):
         """Adds a document to Elasticsearch."""
         logger.info(f"Adding document with input: {state['user_input']}")
@@ -98,20 +102,32 @@ class Agent:
         doc_id = content_parts[0].strip()
         title = content_parts[1].strip()
         content = content_parts[2].strip()
-        document = {
-            "content": content,
-            "title": title,
-            "embedding": self.embeddings.encode(content)  # Assuming you want to store embeddings as well
-        }
-        self.es.index(index=self.index_name, id=doc_id, body=document)
-        logger.info(f"Document '{doc_id}' added.")
+
+        chunks = chunk_text(content)
+        for chunk in chunks:
+            document = {
+                "title": title,
+                "content": chunk,
+                "document_id": doc_id,
+                "embedding": self.embeddings.encode(chunk),
+
+            }
+            self.es.index(index=self.index_name, body=document)
+            logger.info(f"Document '{doc_id}' added.")
         return {"response":  f"Document '{title}' added with ID '{doc_id}'."}
 
     def remove_document(self, state: AgentState):
         """Removes a document from Elasticsearch."""
         logger.info(f"Removing document with ID: {state['user_input']}")
         doc_id = state["user_input"].split("|")[1].strip()
-        self.es.delete(index=self.index_name, id=doc_id)
+        body = {
+            "query": {
+                "match": {
+                    "document_d": doc_id
+                }
+            }
+        }
+        self.es.delete(index=self.index_name, body=body)
         logger.info(f"Document '{doc_id}' removed.")
         return {"response": f"Document '{doc_id}' removed."}
 
@@ -123,30 +139,61 @@ class Agent:
         if not docs:
             logger.info("No matching documents found.")
             return {"retrieved_docs": [], "response": "No matching documents found."}
+        
         logger.info(f"Found {len(docs)} documents.")
         return {"retrieved_docs": docs, "intent": state["intent"]}
 
+    def summarize_documents(self, state: AgentState) -> AgentState:
+        """Generates summaries for each retrieved document."""
+        docs = state.get("retrieved_docs", [])
+        summaries = []
+        for doc in docs:
+            prompt = PROMPT_FOR_SUMMARY.format(document=doc)
+            summary = self.llm(prompt).strip()
+            summaries.append(summary)
+        logger.info(f"Generated {len(summaries)} summaries.")
+        return {"summaries": summaries}
+
+    def merge_summaries(self, state: AgentState) -> AgentState:
+        """Merges individual summaries into a coherent final response."""
+        logger.info(f"Merge summaries, state: {state}")
+        summaries = state.get("summaries", [])
+        if not summaries:
+            return {"response": "No relevant information found."}
+        
+        merged_prompt = PROMPT_FOR_MERGING_SUMMARIES.format(summaries="\n".join(summaries))
+        final_response = self.llm(merged_prompt).strip()
+        logger.info("Final response generated.")
+        return {"summarized_docs": final_response}
+    
     def update_document(self, state: AgentState):
         """Updates a document in Elasticsearch."""
         logger.info(f"Updating document with input: {state['user_input']}")
         parts = state["user_input"].split("|")
         if len(parts) < 3:
             return {"response": "Invalid format! Use: update | doc_id | new_title | [optional new_content]"}
+        
         doc_id = parts[1].strip()
         new_title = parts[2].strip()
         new_content = parts[3].strip() if len(parts) > 3 else None
 
         # Fetch the existing document
-        try:
-            existing_doc = self.es.get(index=self.index_name, id=doc_id)["_source"]
-        except:
+        query={
+            "term": {
+                "document_id":doc_id
+            }
+        }
+        response = self.es.search(index=self.index_name, query=query)
+        if response["hits"]["total"]["value"] == 0:
             return {"response": f"Document with ID '{doc_id}' not found."}
+        
         # Prepare updated fields
         updated_doc = {
             "title": new_title,
-            "content": new_content if new_content else existing_doc["content"],  # Keep old content if not provided
-            "embedding": self.embeddings.encode(new_content) if new_content else existing_doc["embedding"]
         }
+        if new_content:
+            updated_doc.update({"content": new_content})
+            updated_doc.update({"embeddings": self.embeddings.encode(new_content)})
         self.es.index(index=self.index_name, id=doc_id, body=updated_doc)
         logger.info(f"Document '{doc_id}' updated successfully.")
         return {"response": f"Document '{doc_id}' updated successfully with new title '{new_title}'."}
@@ -154,11 +201,12 @@ class Agent:
     def answer_question(self, state: AgentState):
         """Answers a question using RAG from retrieved documents."""
         logger.info(f"Answering question with retrieved documents.")
-        # Retrieve documents from state (assuming they are stored under 'retrieved_docs')
-        docs = state.get("retrieved_docs", [])
+        logger.info(state)
+        docs = state.get("summarized_docs", [])
         if not docs:
             logger.info("No documents found for answering the question.")
             return {"response": "No documents found to provide an answer."}
+        
         context = "\n".join(docs)  # Join documents into a single context string
         query = state["user_input"].strip() 
         prompt = PROMPT_FOR_QA.format(context=context, query=query)
