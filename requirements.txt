@@ -1,0 +1,8 @@
+fastapi
+uvicorn
+pydantic
+elasticsearch
+langchain_ollama
+langgraph
+sentence-transformers
+nltk

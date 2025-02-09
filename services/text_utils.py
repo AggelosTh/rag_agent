@@ -1,6 +1,5 @@
 from sentence_transformers import SentenceTransformer
 from services.es_client import es
-from config import INDEX_NAME
 import nltk
 from nltk.corpus import wordnet
 
