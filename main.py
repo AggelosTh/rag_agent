@@ -3,6 +3,7 @@ from agent import Agent
 from services.es_client import es
 from config import INDEX_NAME, LLM_MODEL
 from models import DocumentRequest, UpdateDocumentRequest
+from routes.chat_routes import router as chat_router
 from services.document_ops import embeddings, hybrid_search
 from services.text_utils import chunk_text
 import logging
@@ -16,6 +17,8 @@ agent = Agent(es=es, index_name=INDEX_NAME, llm_model=LLM_MODEL)
 
 # FastAPI integration
 app = FastAPI()
+
+app.include_router(chat_router, prefix="/chat", tags=["chat"])
 
 @app.post("/process")
 def process_request(user_input: str):
