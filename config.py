@@ -22,3 +22,21 @@ PROMPT_FOR_QA = """
     Question: {query}
     Answer:
 """
+
+PROMPT_FOR_SUMMARY = """
+Summarize the following document in a concise manner, keeping key information:
+
+Document:
+{document}
+
+Summary:
+"""
+
+PROMPT_FOR_MERGING_SUMMARIES = """
+Given the following document summaries, generate a final structured response that combines key points, removes redundancy, and ensures coherence:
+
+Summaries:
+{summaries}
+
+Final Answer:
+"""

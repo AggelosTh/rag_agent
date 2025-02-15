@@ -4,6 +4,7 @@ from services.es_client import es
 from config import INDEX_NAME, LLM_MODEL
 from models import DocumentRequest, UpdateDocumentRequest
 from services.document_ops import embeddings, hybrid_search
+from services.text_utils import chunk_text
 import logging
 
 # Initialize logging
@@ -33,14 +34,20 @@ def add_document_api(request: DocumentRequest):
     logger.info(f"API call: add_document with {request}")
     if not request.doc_id or not request.content or not request.title:
         raise HTTPException(status_code=400, detail="doc_id, content, and title are required")
-    # Create a document dictionary
-    document = {
-        "id": request.doc_id,
-        "content": request.content,
-        "title": request.title,
-        "embedding": embeddings.encode(request.content)  # Assuming you want to store embeddings as well
-    }
-    es.index(index=INDEX_NAME, id=request.doc_id, body=document)
+    
+    content = request.content.replace('\n', '')
+    content = content.replace('"', '')
+    chunks = chunk_text(content)
+
+    for chunk in chunks:
+        # Create a document dictionary
+        document = {
+            "title": request.title,
+            "content": chunk,
+            "document_id": request.doc_id,
+            "embedding": embeddings.encode(chunk)
+        }
+        es.index(index=INDEX_NAME, body=document)
     return {"response": f"Document '{request.title}' added with ID '{request.doc_id}'."}
 
 
@@ -49,7 +56,14 @@ def remove_document_api(request: DocumentRequest):
     logger.info(f"API call: remove_document with {request}")
     if not request.doc_id:
         raise HTTPException(status_code=400, detail="doc_id is required")
-    result = es.delete(index=INDEX_NAME, id=request.doc_id)
+    body = {
+        "query": {
+            "match": {
+                "document_id": request.doc_id
+            }
+        }
+    }
+    result = es.delete_by_query(index=INDEX_NAME, body=body)
     return {"response": result}
 
 

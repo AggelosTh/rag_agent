@@ -11,8 +11,8 @@ class AgentState(TypedDict):
 
 class DocumentRequest(BaseModel):
     doc_id: str
-    title: str
-    content: str
+    title: Optional[str]
+    content: Optional[str]
 
 class UpdateDocumentRequest(BaseModel):
     doc_id: str
