@@ -2,6 +2,7 @@ fastapi
 uvicorn
 pydantic
 elasticsearch
+langchain
 langchain_ollama
 langgraph
 sentence-transformers
