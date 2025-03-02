@@ -1,5 +1,5 @@
-# Use NVIDIA CUDA base image with Ubuntu
-FROM nvidia/cuda:12.6.2-runtime-ubuntu22.04
+# Use NVIDIA's CUDA base image
+FROM nvidia/cuda:12.8.0-base-ubuntu22.04
 
 # Set NVIDIA as the default runtime
 ENV NVIDIA_VISIBLE_DEVICES=all
@@ -10,15 +10,17 @@ WORKDIR /app
 
 # Install dependencies
 RUN apt-get update && apt-get install -y \
+    python3.10 \
     python3-pip \
-    python3-dev \
+    curl \
+    git \
     && rm -rf /var/lib/apt/lists/*
 
-# Install NVIDIA tools inside the container
+# # Install NVIDIA tools inside the container
 RUN pip install nvidia-pyindex && pip install nvidia-ml-py3
 
 # Install torch with CUDA support
-RUN pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
+RUN pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
 
 # Copy requirements first (for caching)
 COPY requirements.txt .
