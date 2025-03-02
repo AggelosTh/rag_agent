@@ -2,13 +2,16 @@ from typing import Optional, TypedDict
 from langgraph.graph import StateGraph, END
 from langchain_ollama import OllamaLLM
 from sentence_transformers import SentenceTransformer
-from config import CLASSIFY_INTENT_PROMPT, PROMPT_FOR_QA, EMBEDDINGS_MODEL, PROMPT_FOR_SUMMARY, PROMPT_FOR_MERGING_SUMMARIES
+from elasticsearch import Elasticsearch
+import config
 from services.text_utils import hybrid_search, chunk_text
 import logging
 
 # Initialize logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+OLLAMA_BASE_URL = 'http://ollama:11434'
 
 class AgentState(TypedDict):
     user_input: str
@@ -24,13 +27,17 @@ class AgentState(TypedDict):
 
 
 class Agent:
-    def __init__(self, es, index_name, llm_model):
+    def __init__(self, es: Elasticsearch, index_name: str, llm_model: str):
         """Initialize the agent with Elasticsearch and LangChain models."""
         self.es = es
         self.index_name = index_name
-        self.llm = OllamaLLM(model=llm_model, temperature=0.0)
-        self.embeddings = SentenceTransformer(EMBEDDINGS_MODEL, device="cuda")
+        self.llm = OllamaLLM(model=llm_model, temperature=0.0, base_url=OLLAMA_BASE_URL)
+        self.embeddings = SentenceTransformer(config.EMBEDDINGS_MODEL, device="cuda")
         
+        # Create index if it doesn't exist
+        if not self.es.indices.exists(index=index_name):
+            self.es.indices.create(index=index_name)
+
         self.workflow = self._build_workflow(
 
         )
@@ -38,7 +45,6 @@ class Agent:
     def _build_workflow(self):
         workflow = StateGraph(AgentState)
 
-        # Add nodes (same as before)
         workflow.add_node("classify_intent", self.classify_intent)
         workflow.add_node("add_document", self.add_document)
         workflow.add_node("remove_document", self.remove_document)
@@ -66,8 +72,6 @@ class Agent:
         workflow.add_edge("summarize_documents", "merge_summaries")
         workflow.add_edge("merge_summaries", "answer_question")
         workflow.add_edge("answer_question", END)
-
-        # Direct edges for other actions
         workflow.add_edge("add_document", END)
         workflow.add_edge("remove_document", END)
         workflow.add_edge("update_document", END)
@@ -81,8 +85,8 @@ class Agent:
     def classify_intent(self, state: AgentState):
         """Classifies user intent based on input using LLM."""
         logger.info(f"Classifying intent for input: {state['user_input']}")
-        prompt = CLASSIFY_INTENT_PROMPT.format(query_input=state['user_input'])
-        intent = self.llm(prompt).strip().lower()
+        prompt = config.CLASSIFY_INTENT_PROMPT.format(query_input=state['user_input'])
+        intent = self.llm.invoke(prompt).strip().lower()
         logger.info(f"Classified intent: {intent}")
         if intent not in ["add_document", "remove_document", "search_document", "update_document", "answer_question"]:
             intent = "answer_question"
@@ -148,8 +152,8 @@ class Agent:
         docs = state.get("retrieved_docs", [])
         summaries = []
         for doc in docs:
-            prompt = PROMPT_FOR_SUMMARY.format(document=doc)
-            summary = self.llm(prompt).strip()
+            prompt = config.PROMPT_FOR_SUMMARY.format(document=doc)
+            summary = self.llm.invoke(prompt).strip()
             summaries.append(summary)
         logger.info(f"Generated {len(summaries)} summaries.")
         return {"summaries": summaries}
@@ -161,8 +165,8 @@ class Agent:
         if not summaries:
             return {"response": "No relevant information found."}
         
-        merged_prompt = PROMPT_FOR_MERGING_SUMMARIES.format(summaries="\n".join(summaries))
-        final_response = self.llm(merged_prompt).strip()
+        merged_prompt = config.PROMPT_FOR_MERGING_SUMMARIES.format(summaries="\n".join(summaries))
+        final_response = self.llm.invoke(merged_prompt).strip()
         logger.info("Final response generated.")
         return {"summarized_docs": final_response}
     
@@ -171,7 +175,7 @@ class Agent:
         logger.info(f"Updating document with input: {state['user_input']}")
         parts = state["user_input"].split("|")
         if len(parts) < 3:
-            return {"response": "Invalid format! Use: update | doc_id | new_title | [optional new_content]"}
+            return {"response": "Invalid format! Use: update || doc_id || new_title || [optional new_content]"}
         
         doc_id = parts[1].strip()
         new_title = parts[2].strip()
@@ -209,8 +213,8 @@ class Agent:
         
         context = "\n".join(docs)  # Join documents into a single context string
         query = state["user_input"].strip() 
-        prompt = PROMPT_FOR_QA.format(context=context, query=query)
-        response = self.llm(prompt)
+        prompt = config.PROMPT_FOR_QA.format(context=context, query=query)
+        response = self.llm.invoke(prompt)
         logger.info(f"Generated response: {response}")
         return {"response": response}
 

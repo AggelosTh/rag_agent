@@ -1,4 +1,4 @@
-ELASTICSEARCH_URL = "http://localhost:9200"
+ELASTICSEARCH_URL = "http://elasticsearch:9200"
 INDEX_NAME = "chunks"
 LLM_MODEL = "llama3.1"
 # EMBEDDINGS_MODEL = "all-MiniLM-L6-v2"
