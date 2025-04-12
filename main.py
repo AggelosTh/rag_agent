@@ -35,6 +35,9 @@ def add_document_api(request: DocumentRequest):
     if not request.doc_id or not request.content or not request.title:
         raise HTTPException(status_code=400, detail="doc_id, content, and title are required")
     
+    # index the parent document
+    # es.index(index=INDEX_NAME, body=request.content)
+
     content = request.content.replace('\n', '')
     content = content.replace('"', '')
     chunks = chunk_text(content)
@@ -47,7 +50,7 @@ def add_document_api(request: DocumentRequest):
             "document_id": request.doc_id,
             "embedding": embeddings.encode(chunk)
         }
-        es.index(index=INDEX_NAME, body=document)
+        es.index(index='_'.join([INDEX_NAME, 'chunks']), body=document)
     return {"response": f"Document '{request.title}' added with ID '{request.doc_id}'."}
 
 
@@ -85,18 +88,18 @@ def update_document_api(request: UpdateDocumentRequest):
     return {"response": f"Document '{request.doc_id}' updated successfully with new title '{request.new_title}'."}
 
 
-@app.post("/search_document")
-def search_document_api(query: str):
-    logger.info(f"API call: search_document for query: {query}")
-    if not query:
-        raise HTTPException(status_code=400, detail="query is required")
-    docs = hybrid_search(query=query)
-    if not docs:
-        logger.info("No matching documents found.")
-        return {"response": "No matching documents found."}
-    logger.info(f"Found {len(docs)} documents.")
-    logger.info(f"Found documents. {docs}")
-    return {"retrieved_docs": docs, "response": "Documents found!"}
+# @app.post("/search_document")
+# def search_document_api(query: str):
+#     logger.info(f"API call: search_document for query: {query}")
+#     if not query:
+#         raise HTTPException(status_code=400, detail="query is required")
+#     docs = hybrid_search(query=query)
+#     if not docs:
+#         logger.info("No matching documents found.")
+#         return {"response": "No matching documents found."}
+#     logger.info(f"Found {len(docs)} documents.")
+#     logger.info(f"Found documents. {docs}")
+#     return {"retrieved_docs": docs, "response": "Documents found!"}
 
 
 @app.get("/")
