@@ -27,16 +27,18 @@ class AgentState(TypedDict):
 
 
 class Agent:
-    def __init__(self, es: Elasticsearch, index_name: str, llm_model: str):
+    def __init__(self, es: Elasticsearch, index_name: str, llm_model: str, use_summarization: bool = False):
         """Initialize the agent with Elasticsearch and LangChain models."""
         self.es = es
         self.index_name = index_name
         self.llm = OllamaLLM(model=llm_model, temperature=0.0, base_url=OLLAMA_BASE_URL)
         self.embeddings = SentenceTransformer(config.EMBEDDINGS_MODEL, device="cuda")
+        self.use_summarization = use_summarization
         
         # Create index if it doesn't exist
         if not self.es.indices.exists(index=index_name):
             self.es.indices.create(index=index_name)
+
 
         self.workflow = self._build_workflow(
 
@@ -66,6 +68,16 @@ class Agent:
                 "answer_question": "search_document",
             }
         )
+        if self.use_summarization:
+            workflow.add_edge("search_document", "summarize_documents")
+            workflow.add_edge("summarize_documents", "merge_summaries")
+            workflow.add_edge("merge_summaries", "answer_question")
+        else:
+            workflow.add_conditional_edges(
+                "search_document",
+                lambda state: self.is_answer_question(state),
+                {True: "answer_question", False: END}  # If not answer_question, stop after search
+            )
 
         # Linear flow for question answering
         workflow.add_edge("search_document", "summarize_documents")
@@ -75,6 +87,7 @@ class Agent:
         workflow.add_edge("add_document", END)
         workflow.add_edge("remove_document", END)
         workflow.add_edge("update_document", END)
+        workflow.add_edge("answer_question", END)
 
         # Set entry point for the workflow
         workflow.set_entry_point("classify_intent")
@@ -149,18 +162,18 @@ class Agent:
 
     def summarize_documents(self, state: AgentState) -> AgentState:
         """Generates summaries for each retrieved document."""
+        logger.info(f"Generate {len(summaries)} summaries.")
         docs = state.get("retrieved_docs", [])
         summaries = []
         for doc in docs:
             prompt = config.PROMPT_FOR_SUMMARY.format(document=doc)
             summary = self.llm.invoke(prompt).strip()
             summaries.append(summary)
-        logger.info(f"Generated {len(summaries)} summaries.")
         return {"summaries": summaries}
 
     def merge_summaries(self, state: AgentState) -> AgentState:
         """Merges individual summaries into a coherent final response."""
-        logger.info(f"Merge summaries, state: {state}")
+        logger.info(f"Merging summaries")
         summaries = state.get("summaries", [])
         if not summaries:
             return {"response": "No relevant information found."}
@@ -172,7 +185,7 @@ class Agent:
     
     def update_document(self, state: AgentState):
         """Updates a document in Elasticsearch."""
-        logger.info(f"Updating document with input: {state['user_input']}")
+        logger.info("Updating document")
         parts = state["user_input"].split("|")
         if len(parts) < 3:
             return {"response": "Invalid format! Use: update || doc_id || new_title || [optional new_content]"}
@@ -206,7 +219,10 @@ class Agent:
         """Answers a question using RAG from retrieved documents."""
         logger.info(f"Answering question with retrieved documents.")
         logger.info(state)
-        docs = state.get("summarized_docs", [])
+        if self.use_summarization:
+            docs = state.get("summarized_docs", [])
+        else:
+            docs = state.get("retrieved_docs", [])    
         if not docs:
             logger.info("No documents found for answering the question.")
             return {"response": "No documents found to provide an answer."}
