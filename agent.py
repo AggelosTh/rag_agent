@@ -80,10 +80,6 @@ class Agent:
             )
 
         # Linear flow for question answering
-        workflow.add_edge("search_document", "summarize_documents")
-        workflow.add_edge("summarize_documents", "merge_summaries")
-        workflow.add_edge("merge_summaries", "answer_question")
-        workflow.add_edge("answer_question", END)
         workflow.add_edge("add_document", END)
         workflow.add_edge("remove_document", END)
         workflow.add_edge("update_document", END)
@@ -162,7 +158,7 @@ class Agent:
 
     def summarize_documents(self, state: AgentState) -> AgentState:
         """Generates summaries for each retrieved document."""
-        logger.info(f"Generate {len(summaries)} summaries.")
+        logger.info(f"Generate summaries.")
         docs = state.get("retrieved_docs", [])
         summaries = []
         for doc in docs:
