@@ -28,36 +28,6 @@ def expand_query(query: str) -> list:
 
     return list(expanded_terms)
 
-
-def hybrid_search(query, index_name, embeddings):
-    expanded_queries = expand_query(query)
-    query_embedding = embeddings.encode(query).tolist()
-
-    search_body = {
-        "size": 2,
-        "query": {
-            "bool": {
-                "should": [
-                    {"match": {"content": query}},  # Original BM25
-                    *[{"match": {"content": q}} for q in expanded_queries],  # Synonyms
-                    {
-                        "script_score": {
-                            "query": {"match_all": {}},
-                            "script": {
-                                "source": "cosineSimilarity(params.query_vector, 'embedding') + 1.0",
-                                "params": {"query_vector": query_embedding}
-                            }
-                        }
-                    }
-                ]
-            }
-        }
-    }
-    
-    results = es.search(index=index_name, body=search_body)
-    return [res["_source"]["content"] for res in results["hits"]["hits"]]
-
-
 def chunk_text(text: str) -> list[str]:
     chunks = text_splitter.split_text(text)
     return chunks
