@@ -55,7 +55,12 @@ def hybrid_search(query, index_name, embeddings):
     }
     
     results = es.search(index=index_name, body=search_body)
-    return [res["_source"]["content"] for res in results["hits"]["hits"]]
+    return [{
+       "doc_id": res["_source"]["document_id"], 
+       "title": res["_source"]["title"], 
+       "content": res["_source"]["content"]} 
+       for res in results["hits"]["hits"]
+        ]
 
 
 def chunk_text(text: str) -> list[str]:

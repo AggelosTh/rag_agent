@@ -2,13 +2,16 @@ from typing import Optional, TypedDict
 from langgraph.graph import StateGraph, END
 from langchain_ollama import OllamaLLM
 from sentence_transformers import SentenceTransformer
-from config import CLASSIFY_INTENT_PROMPT, PROMPT_FOR_QA, EMBEDDINGS_MODEL, PROMPT_FOR_SUMMARY, PROMPT_FOR_MERGING_SUMMARIES
+from elasticsearch import Elasticsearch
+import config
 from services.text_utils import hybrid_search, chunk_text
 import logging
 
 # Initialize logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+OLLAMA_BASE_URL = 'http://ollama:11434'
 
 class AgentState(TypedDict):
     user_input: str
@@ -24,13 +27,18 @@ class AgentState(TypedDict):
 
 
 class Agent:
-    def __init__(self, es, index_name, llm_model, use_summarizaton=False):
+    def __init__(self, es: Elasticsearch, index_name: str, llm_model: str, use_summarization: bool = False):
         """Initialize the agent with Elasticsearch and LangChain models."""
         self.es = es
         self.index_name = index_name
-        self.llm = OllamaLLM(model=llm_model, temperature=0.0)
-        self.embeddings = SentenceTransformer(EMBEDDINGS_MODEL, device="cuda")
-        self.use_summarization = use_summarizaton
+        self.llm = OllamaLLM(model=llm_model, temperature=0.0, base_url=OLLAMA_BASE_URL)
+        self.embeddings = SentenceTransformer(config.EMBEDDINGS_MODEL, device="cuda")
+        self.use_summarization = use_summarization
+        
+        # Create index if it doesn't exist
+        if not self.es.indices.exists(index=index_name):
+            self.es.indices.create(index=index_name)
+
 
         self.workflow = self._build_workflow(
 
@@ -39,12 +47,9 @@ class Agent:
     def _build_workflow(self):
         workflow = StateGraph(AgentState)
 
-        # Add nodes (same as before)
         workflow.add_node("classify_intent", self.classify_intent)
-        workflow.add_node("add_document", self.add_document)
         workflow.add_node("remove_document", self.remove_document)
         workflow.add_node("search_document", self.search_document)
-        workflow.add_node("update_document", self.update_document)
         workflow.add_node("summarize_documents", self.summarize_documents)
         workflow.add_node("merge_summaries", self.merge_summaries)
         workflow.add_node("answer_question", self.answer_question)
@@ -54,10 +59,8 @@ class Agent:
             "classify_intent",
             lambda state: state["intent"],
             {
-                "add_document": "add_document",
                 "remove_document": "remove_document",
                 "search_document": "search_document",
-                "update_document": "update_document",
                 "answer_question": "search_document",
             }
         )
@@ -72,11 +75,7 @@ class Agent:
                 {True: "answer_question", False: END}  # If not answer_question, stop after search
             )
 
-
-        # Direct edges for other actions
-        workflow.add_edge("add_document", END)
         workflow.add_edge("remove_document", END)
-        workflow.add_edge("update_document", END)
         workflow.add_edge("answer_question", END)
 
         # Set entry point for the workflow
@@ -88,10 +87,10 @@ class Agent:
     def classify_intent(self, state: AgentState):
         """Classifies user intent based on input using LLM."""
         logger.info(f"Classifying intent for input: {state['user_input']}")
-        prompt = CLASSIFY_INTENT_PROMPT.format(query_input=state['user_input'])
-        intent = self.llm(prompt).strip().lower()
+        prompt = config.CLASSIFY_INTENT_PROMPT.format(query_input=state['user_input'])
+        intent = self.llm.invoke(prompt).strip().lower()
         logger.info(f"Classified intent: {intent}")
-        if intent not in ["add_document", "remove_document", "search_document", "update_document", "answer_question"]:
+        if intent not in ["add_document", "search_document", "answer_question"]:
             intent = "answer_question"
         return {"intent": intent}   
 
@@ -148,16 +147,16 @@ class Agent:
             return {"retrieved_docs": [], "response": "No matching documents found."}
         
         logger.info(f"Found {len(docs)} documents.")
-        return {"retrieved_docs": docs, "intent": state["intent"]}
+        return {"retrieved_docs": [doc["content"] for doc in docs], "intent": state["intent"], "response": [doc["title"] for doc in docs]}
 
     def summarize_documents(self, state: AgentState) -> AgentState:
         """Generates summaries for each retrieved document."""
-        logger.info(f"Generate {len(summaries)} summaries.")
+        logger.info(f"Generate summaries.")
         docs = state.get("retrieved_docs", [])
         summaries = []
         for doc in docs:
-            prompt = PROMPT_FOR_SUMMARY.format(document=doc)
-            summary = self.llm(prompt).strip()
+            prompt = config.PROMPT_FOR_SUMMARY.format(document=doc)
+            summary = self.llm.invoke(prompt).strip()
             summaries.append(summary)
         return {"summaries": summaries}
 
@@ -168,42 +167,11 @@ class Agent:
         if not summaries:
             return {"response": "No relevant information found."}
         
-        merged_prompt = PROMPT_FOR_MERGING_SUMMARIES.format(summaries="\n".join(summaries))
-        final_response = self.llm(merged_prompt).strip()
+        merged_prompt = config.PROMPT_FOR_MERGING_SUMMARIES.format(summaries="\n".join(summaries))
+        final_response = self.llm.invoke(merged_prompt).strip()
         logger.info("Final response generated.")
         return {"summarized_docs": final_response}
     
-    def update_document(self, state: AgentState):
-        """Updates a document in Elasticsearch."""
-        logger.info("Updating document")
-        parts = state["user_input"].split("|")
-        if len(parts) < 3:
-            return {"response": "Invalid format! Use: update | doc_id | new_title | [optional new_content]"}
-        
-        doc_id = parts[1].strip()
-        new_title = parts[2].strip()
-        new_content = parts[3].strip() if len(parts) > 3 else None
-
-        # Fetch the existing document
-        query={
-            "term": {
-                "document_id":doc_id
-            }
-        }
-        response = self.es.search(index=self.index_name, query=query)
-        if response["hits"]["total"]["value"] == 0:
-            return {"response": f"Document with ID '{doc_id}' not found."}
-        
-        # Prepare updated fields
-        updated_doc = {
-            "title": new_title,
-        }
-        if new_content:
-            updated_doc.update({"content": new_content})
-            updated_doc.update({"embeddings": self.embeddings.encode(new_content)})
-        self.es.index(index=self.index_name, id=doc_id, body=updated_doc)
-        logger.info(f"Document '{doc_id}' updated successfully.")
-        return {"response": f"Document '{doc_id}' updated successfully with new title '{new_title}'."}
 
     def answer_question(self, state: AgentState):
         """Answers a question using RAG from retrieved documents."""
@@ -219,8 +187,8 @@ class Agent:
         
         context = "\n".join(docs)  # Join documents into a single context string
         query = state["user_input"].strip() 
-        prompt = PROMPT_FOR_QA.format(context=context, query=query)
-        response = self.llm(prompt)
+        prompt = config.PROMPT_FOR_QA.format(context=context, query=query)
+        response = self.llm.invoke(prompt)
         logger.info(f"Generated response: {response}")
         return {"response": response}
 
