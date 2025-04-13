@@ -7,10 +7,8 @@ from services.document_ops import embeddings, hybrid_search
 from services.text_utils import chunk_text
 import logging
 
-# Initialize logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
 
 agent = Agent(es=es, index_name=INDEX_NAME, llm_model=LLM_MODEL)
 
@@ -19,9 +17,7 @@ app = FastAPI()
 @app.post("/process")
 def process_request(user_input: str):
     """
-    add_document: 'doc_id | title | content'
     remove_document: 'remove | doc_id'
-    update_document: 'update | doc_id | new_title | [optional new_content]'
     """
     logger.info(f"Processing request: {user_input}")
     result = agent.workflow.invoke({"user_input": user_input})
