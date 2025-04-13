@@ -48,10 +48,8 @@ class Agent:
         workflow = StateGraph(AgentState)
 
         workflow.add_node("classify_intent", self.classify_intent)
-        workflow.add_node("add_document", self.add_document)
         workflow.add_node("remove_document", self.remove_document)
         workflow.add_node("search_document", self.search_document)
-        workflow.add_node("update_document", self.update_document)
         workflow.add_node("summarize_documents", self.summarize_documents)
         workflow.add_node("merge_summaries", self.merge_summaries)
         workflow.add_node("answer_question", self.answer_question)
@@ -61,10 +59,8 @@ class Agent:
             "classify_intent",
             lambda state: state["intent"],
             {
-                "add_document": "add_document",
                 "remove_document": "remove_document",
                 "search_document": "search_document",
-                "update_document": "update_document",
                 "answer_question": "search_document",
             }
         )
@@ -79,10 +75,7 @@ class Agent:
                 {True: "answer_question", False: END}  # If not answer_question, stop after search
             )
 
-        # Linear flow for question answering
-        workflow.add_edge("add_document", END)
         workflow.add_edge("remove_document", END)
-        workflow.add_edge("update_document", END)
         workflow.add_edge("answer_question", END)
 
         # Set entry point for the workflow
@@ -97,7 +90,7 @@ class Agent:
         prompt = config.CLASSIFY_INTENT_PROMPT.format(query_input=state['user_input'])
         intent = self.llm.invoke(prompt).strip().lower()
         logger.info(f"Classified intent: {intent}")
-        if intent not in ["add_document", "remove_document", "search_document", "update_document", "answer_question"]:
+        if intent not in ["add_document", "search_document", "answer_question"]:
             intent = "answer_question"
         return {"intent": intent}   
 
@@ -154,7 +147,7 @@ class Agent:
             return {"retrieved_docs": [], "response": "No matching documents found."}
         
         logger.info(f"Found {len(docs)} documents.")
-        return {"retrieved_docs": docs, "intent": state["intent"]}
+        return {"retrieved_docs": [doc["content"] for doc in docs], "intent": state["intent"], "response": [doc["title"] for doc in docs]}
 
     def summarize_documents(self, state: AgentState) -> AgentState:
         """Generates summaries for each retrieved document."""
@@ -179,37 +172,6 @@ class Agent:
         logger.info("Final response generated.")
         return {"summarized_docs": final_response}
     
-    def update_document(self, state: AgentState):
-        """Updates a document in Elasticsearch."""
-        logger.info("Updating document")
-        parts = state["user_input"].split("|")
-        if len(parts) < 3:
-            return {"response": "Invalid format! Use: update || doc_id || new_title || [optional new_content]"}
-        
-        doc_id = parts[1].strip()
-        new_title = parts[2].strip()
-        new_content = parts[3].strip() if len(parts) > 3 else None
-
-        # Fetch the existing document
-        query={
-            "term": {
-                "document_id":doc_id
-            }
-        }
-        response = self.es.search(index=self.index_name, query=query)
-        if response["hits"]["total"]["value"] == 0:
-            return {"response": f"Document with ID '{doc_id}' not found."}
-        
-        # Prepare updated fields
-        updated_doc = {
-            "title": new_title,
-        }
-        if new_content:
-            updated_doc.update({"content": new_content})
-            updated_doc.update({"embeddings": self.embeddings.encode(new_content)})
-        self.es.index(index=self.index_name, id=doc_id, body=updated_doc)
-        logger.info(f"Document '{doc_id}' updated successfully.")
-        return {"response": f"Document '{doc_id}' updated successfully with new title '{new_title}'."}
 
     def answer_question(self, state: AgentState):
         """Answers a question using RAG from retrieved documents."""
