@@ -28,7 +28,7 @@ def add_document_api(request: DocumentRequest):
     logger.info(f"API call: add_document with {request}")
     if not request.doc_id or not request.content or not request.title:
         raise HTTPException(status_code=400, detail="doc_id, content, and title are required")
-    
+
     content = request.content.replace('\n', '')
     content = content.replace('"', '')
     chunks = chunk_text(content)
@@ -41,7 +41,7 @@ def add_document_api(request: DocumentRequest):
             "document_id": request.doc_id,
             "embedding": embeddings.encode(chunk)
         }
-        es.index(index=INDEX_NAME, body=document)
+        es.index(index='_'.join([INDEX_NAME, 'chunks']), body=document)
     return {"response": f"Document '{request.title}' added with ID '{request.doc_id}'."}
 
 @app.post("/remove_document")
