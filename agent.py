@@ -3,8 +3,8 @@ from models import *
 from langgraph.graph import StateGraph, END
 from langchain_ollama import OllamaLLM
 from sentence_transformers import SentenceTransformer
-from config import CLASSIFY_INTENT_PROMPT, PROMPT_FOR_QA, EMBEDDINGS_MODEL, PROMPT_FOR_SUMMARY, PROMPT_FOR_MERGING_SUMMARIES
 from services.text_utils import expand_query
+import config
 import json
 from elasticsearch import Elasticsearch
 import logging
@@ -12,24 +12,37 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+OLLAMA_BASE_URL = 'http://ollama:11434'
+
+class AgentState(TypedDict):
+    user_input: str
+    retrieved_docs: Optional[list]
+    response: Optional[str]
+    doc_id: Optional[str]
+    new_title: Optional[str]
+    new_content: Optional[str]
+    intent: Optional[str]
+    summaries: Optional[str]
+    summarized_docs: Optional[str]
+
+
 class Agent:
-    def __init__(self, es: Elasticsearch, index_name, llm_model, use_summarization=False):
-        """Initialize the agent with Elasticsearch connection info and models."""
+    def __init__(self, es: Elasticsearch, index_name: str, llm_model: str, use_summarization: bool = False):
+        """Initialize the agent with Elasticsearch and LangChain models."""
         self.index_name = index_name
         self.index_name_chunks = '_'.join([index_name, 'chunks'])
-        self.llm = OllamaLLM(model=llm_model, temperature=0.0)
-        self.embeddings = SentenceTransformer(EMBEDDINGS_MODEL, device="cuda")
+        self.llm = OllamaLLM(model=llm_model, temperature=0.0, base_url=OLLAMA_BASE_URL)
+        self.embeddings = SentenceTransformer(config.EMBEDDINGS_MODEL, device="cuda")
         self.use_summarization = use_summarization
         self.es = es
-        
+
         if not self.es.indices.exists(index=index_name):
             self.es.indices.create(index=index_name)
         if not self.es.indices.exists(index=self.index_name_chunks):
-            self.es.indices.create(index=self.index_name_chunks)    
-        
+            self.es.indices.create(index=self.index_name_chunks) 
+
         self.workflow = self._build_workflow()
 
-    # @tool
     def search_elasticsearch(self, query: str, intent: str, k: int = 5) -> List[Dict[str, Any]]:
         """Search for documents in Elasticsearch using hybrid retrieval (BM25 + vector search)."""
         expanded_queries = expand_query(query)
@@ -71,8 +84,8 @@ class Agent:
             logger.error(f"Elasticsearch search error: {e}")
             return []
         if results:
-            if intent == "search_documents":
-                document = self.es.get(index=self.index_name, id=results["doc_id"])
+            if intent == "search_document":
+                document = self.es.get(index=self.index_name, id=results["doc_id"]) # TODO needs fix
                 return document
             return results
         return []
@@ -110,8 +123,6 @@ class Agent:
 
     def _build_workflow(self):
         workflow = StateGraph(AgentState)
-        
-        # Add nodes
         workflow.add_node("classify_intent", self.classify_intent)
         workflow.add_node("remove_document", self.remove_document)
         workflow.add_node("search_document", self.search_document)
@@ -126,7 +137,7 @@ class Agent:
             {
                 "remove_document": "remove_document",
                 "search_document": "search_document",
-                "answer_question": "search_document"
+                "answer_question": "search_document",
             }
         )
         
@@ -161,7 +172,7 @@ class Agent:
     def classify_intent(self, state: AgentState) -> AgentState:
         """Classify user intent and extract structured information using natural language understanding."""
         user_input = state["user_input"].strip()
-        prompt = CLASSIFY_INTENT_PROMPT.format(query_input=user_input)
+        prompt = config.CLASSIFY_INTENT_PROMPT.format(query_input=user_input)
         
         try:
             # Get LLM response
@@ -222,23 +233,17 @@ class Agent:
             return {"retrieved_docs": [], "response": "No matching documents found."}
         
         logger.info(f"Found {len(docs)} documents.")
-        return {"retrieved_docs": docs, "response": docs}
+        return {"retrieved_docs": [doc["content"] for doc in docs], "intent": state["intent"], "response": [doc["title"] for doc in docs]}
 
     def summarize_documents(self, state: AgentState) -> AgentState:
         """Generates summaries for each retrieved document."""
+        logger.info(f"Generate summaries.")
         docs = state.get("retrieved_docs", [])
         summaries = []
         
         for doc in docs:
-            content = doc.get("content", "")
-            doc_id = doc.get("doc_id", "")
-            title = doc.get("title", "")
-            
-            # Format document for summarization
-            document_text = f"Document ID: {doc_id}\nTitle: {title}\n\nContent:\n{content}"
-            
-            prompt = PROMPT_FOR_SUMMARY.format(document=document_text)
-            summary = self.llm(prompt).strip()
+            prompt = config.PROMPT_FOR_SUMMARY.format(document=doc)
+            summary = self.llm.invoke(prompt).strip()
             summaries.append(summary)
         
         logger.info(f"Generated {len(summaries)} summaries.")
@@ -252,13 +257,13 @@ class Agent:
         if not summaries:
             return {"response": "No relevant information found to answer your question."}
         
-        merged_prompt = PROMPT_FOR_MERGING_SUMMARIES.format(summaries="\n".join(summaries))
-        final_response = self.llm(merged_prompt).strip()
-        
-        logger.info("Final response generated from merged summaries.")
+        merged_prompt = config.PROMPT_FOR_MERGING_SUMMARIES.format(summaries="\n".join(summaries))
+        final_response = self.llm.invoke(merged_prompt).strip()
+        logger.info("Final response generated.")
         return {"summarized_docs": final_response}
+    
 
-    def answer_question(self, state: AgentState) -> AgentState:
+    def answer_question(self, state: AgentState):
         """Answers a question using RAG from retrieved documents."""
         logger.info("Answering question with retrieved documents.")
         
@@ -285,7 +290,7 @@ class Agent:
         
         # Generate answer using context and query
         query = state["user_input"].strip()
-        prompt = PROMPT_FOR_QA.format(context=context, query=query)
+        prompt = config.PROMPT_FOR_QA.format(context=context, query=query)
         response = self.llm(prompt)
         
         logger.info("Generated response to user query.")
