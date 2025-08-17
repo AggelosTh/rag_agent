@@ -54,9 +54,3 @@ docker compose up --build
 ```
 
 ---
-
-## 📖 Usage
-
-- Add documents to Elasticsearch through the API
-- Query the system using natural language
-- Receive summarized and merged responses
