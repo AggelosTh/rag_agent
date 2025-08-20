@@ -1,6 +1,6 @@
 from sentence_transformers import SentenceTransformer
 from services.es_client import es
-from config import INDEX_NAME, EMBEDDINGS_MODEL
+from config import INDEX_NAME, embeddings
 import nltk
 from nltk.corpus import wordnet
 
@@ -12,8 +12,6 @@ logger = logging.getLogger(__name__)
 
 nltk.download("wordnet")
 nltk.download("omw-1.4")
-
-embeddings = SentenceTransformer(EMBEDDINGS_MODEL, device="cuda")
 
 def expand_query(query: str) -> list:
     words = query.split()
