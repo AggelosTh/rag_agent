@@ -1,10 +1,13 @@
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+
 from agent import Agent
 from services.es_client import es
 from config import INDEX_NAME, LLM_MODEL
 from models import DocumentRequest
 from services.document_ops import embeddings, hybrid_search
 from services.text_utils import chunk_text
+
 import logging
 
 logging.basicConfig(level=logging.INFO)
@@ -13,6 +16,14 @@ logger = logging.getLogger(__name__)
 agent = Agent(es=es, index_name=INDEX_NAME, llm_model=LLM_MODEL)
 
 app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # or ["http://localhost:3000"]
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 @app.post("/process")
 def process_request(user_input: str):
