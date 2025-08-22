@@ -1,64 +1,47 @@
 import { useState } from "react";
 import ChatBox from "./ChatBox";
 import DocumentManager from "./DocumentManager";
-import { motion } from "framer-motion";
-import { MessageSquare, Folder } from "lucide-react";
 
 function App() {
   const [activeTab, setActiveTab] = useState("chat");
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-purple-600 via-blue-600 to-cyan-500 text-white flex flex-col items-center justify-center p-8">
-      
-      {/* Header */}
-      <motion.div
-        initial={{ opacity: 0, y: -20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.5 }}
-        className="text-center mb-12"
-      >
-        <h1 className="text-6xl font-black mb-4 text-white drop-shadow-lg">
-          RAG Assistant
-        </h1>
-      </motion.div>
+    <div className="p-6">
+      <h1 className="text-2xl font-bold mb-4">RAG Agent UI</h1>
 
-      {/* Tabs */}
-      <div className="flex space-x-4 mb-8">
+      {/* Tab buttons */}
+      <div className="flex gap-4 mb-6">
         <button
-          onClick={() => setActiveTab("chat")}
-          className={`flex items-center px-8 py-4 rounded-xl text-lg font-bold transition-all duration-300 ${
+          className={`px-4 py-2 rounded transition ${
             activeTab === "chat"
-              ? "bg-white text-purple-600 shadow-xl"
-              : "bg-purple-800/50 hover:bg-purple-700/50 text-white"
+              ? "bg-blue-600 text-white shadow-md"
+              : "bg-gray-200 hover:bg-gray-300"
           }`}
+          onClick={() => setActiveTab("chat")}
         >
-          <MessageSquare className="w-6 h-6 mr-3" />
-          Chat
+          💬 Chat
         </button>
         <button
-          onClick={() => setActiveTab("docs")}
-          className={`flex items-center px-8 py-4 rounded-xl text-lg font-bold transition-all duration-300 ${
+          className={`px-4 py-2 rounded transition ${
             activeTab === "docs"
-              ? "bg-white text-purple-600 shadow-xl"
-              : "bg-purple-800/50 hover:bg-purple-700/50 text-white"
+              ? "bg-blue-600 text-white shadow-md"
+              : "bg-gray-200 hover:bg-gray-300"
           }`}
+          onClick={() => setActiveTab("docs")}
         >
-          <Folder className="w-6 h-6 mr-3" />
-          Documents
+          📂 Documents
         </button>
       </div>
 
-      {/* Content */}
-      <motion.div
-        key={activeTab}
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.4 }}
-        className="w-full max-w-6xl"
-      >
-        {activeTab === "chat" ? <ChatBox /> : <DocumentManager />}
-      </motion.div>
-
+      {/* Keep both mounted, toggle visibility */}
+      <div>
+        <div className={activeTab === "chat" ? "" : "hidden"}>
+          <ChatBox />
+        </div>
+        <div className={activeTab === "docs" ? "" : "hidden"}>
+          <DocumentManager />
+        </div>
+      </div>
     </div>
   );
 }

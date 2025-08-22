@@ -41,7 +41,7 @@ export default function DocumentManager() {
 
     setIsLoading(prev => ({ ...prev, remove: true }));
     try {
-      const res = await removeDocument(doc.doc_id);
+      const res = await removeDocument(doc);
       showNotification("Document removed!", "success");
       setDoc({ doc_id: "", title: "", content: "" });
     } catch (error) {

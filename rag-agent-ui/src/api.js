@@ -16,12 +16,8 @@ export const addDocument = async (doc) => {
   return res.data.response;
 };
 
-export const removeDocument = async (doc_id) => {
-  const res = await API.post(
-    "/remove_document",
-    { doc_id: doc_id },   // explicit mapping
-    { headers: { "Content-Type": "application/json" } }
-  );
+export const removeDocument = async (doc) => {
+  const res = await API.post("/remove_document", doc);
   return res.data.response;
 };
 
