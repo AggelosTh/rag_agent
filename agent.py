@@ -30,16 +30,13 @@ class Agent:
     def __init__(self, es: Elasticsearch, index_name: str, llm_model: str, use_summarization: bool = False):
         """Initialize the agent with Elasticsearch and LangChain models."""
         self.index_name = index_name
-        self.index_name_chunks = '_'.join([index_name, 'chunks'])
         self.llm = OllamaLLM(model=llm_model, temperature=0.0, base_url=OLLAMA_BASE_URL)
-        self.embeddings = SentenceTransformer(config.EMBEDDINGS_MODEL, device="cuda")
+        self.embeddings = config.embeddings
         self.use_summarization = use_summarization
         self.es = es
 
         if not self.es.indices.exists(index=index_name):
             self.es.indices.create(index=index_name)
-        if not self.es.indices.exists(index=self.index_name_chunks):
-            self.es.indices.create(index=self.index_name_chunks) 
 
         self.workflow = self._build_workflow()
 
@@ -71,7 +68,7 @@ class Agent:
     }
         
         try:
-            response = self.es.search(index=self.index_name_chunks, body=hybrid_query)
+            response = self.es.search(index=self.index_name, body=hybrid_query)
             results = []
             for hit in response["hits"]["hits"]:
                 results.append({
@@ -233,7 +230,7 @@ class Agent:
             return {"retrieved_docs": [], "response": "No matching documents found."}
         
         logger.info(f"Found {len(docs)} documents.")
-        return {"retrieved_docs": [doc["content"] for doc in docs], "intent": state["intent"], "response": [doc["title"] for doc in docs]}
+        return {"retrieved_docs": [doc for doc in docs], "intent": state["intent"], "response": [doc["title"] for doc in docs]}
 
     def summarize_documents(self, state: AgentState) -> AgentState:
         """Generates summaries for each retrieved document."""
