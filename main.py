@@ -36,7 +36,7 @@ def process_request(user_input: str):
 
 @app.post("/add_document")
 def add_document_api(request: DocumentRequest):
-    logger.info(f"API call: add_document with {request}")
+    logger.info(f"API call: add_document with title: {request.title}, id: {request.doc_id}")
     if not request.doc_id or not request.content or not request.title:
         raise HTTPException(status_code=400, detail="doc_id, content, and title are required")
 
@@ -52,7 +52,8 @@ def add_document_api(request: DocumentRequest):
             "document_id": request.doc_id,
             "embedding": embeddings.encode(chunk)
         }
-        es.index(index='_'.join([INDEX_NAME, 'chunks']), body=document)
+        logger.info("THE INDEX NAME IS: {INDEX_NAME}")
+        es.index(index=INDEX_NAME, body=document)
     return {"response": f"Document '{request.title}' added with ID '{request.doc_id}'."}
 
 @app.post("/remove_document")
