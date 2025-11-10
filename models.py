@@ -1,5 +1,7 @@
-from typing import TypedDict, Optional
+from typing import Optional, TypedDict
+
 from pydantic import BaseModel, Field
+
 
 class AgentState(TypedDict):
     user_input: str

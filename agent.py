@@ -1,13 +1,14 @@
-from typing import List, Dict, Any
-from models import *
-from langgraph.graph import StateGraph, END
-from langchain_ollama import OllamaLLM
-from sentence_transformers import SentenceTransformer
-from services.text_utils import expand_query
-import config
 import json
-from elasticsearch import Elasticsearch
 import logging
+from typing import Any, Dict, List
+
+from elasticsearch import Elasticsearch
+from langchain_ollama import OllamaLLM
+from langgraph.graph import END, StateGraph
+
+import config
+from models import *
+from services.text_utils import expand_query
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -238,7 +239,7 @@ class Agent:
         docs = state.get("retrieved_docs", [])
         summaries = []
         
-        for doc in docs:
+        for doc in docs[:2]:
             prompt = config.PROMPT_FOR_SUMMARY.format(document=doc)
             summary = self.llm.invoke(prompt).strip()
             summaries.append(summary)

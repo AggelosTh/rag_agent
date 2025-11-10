@@ -1,12 +1,13 @@
 import React, { useState, useRef, useEffect } from "react";
 import axios from "axios";
 import { motion } from "framer-motion";
-import { Send, Bot, User, Loader2 } from "lucide-react";
+import { Send, Bot, User, Loader2, FileText } from "lucide-react";
 
 export default function ChatBox() {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [useSummarization, setUseSummarization] = useState(false);
   const messagesEndRef = useRef(null);
 
   const scrollToBottom = () => {
@@ -27,7 +28,10 @@ export default function ChatBox() {
 
     try {
       const response = await axios.post("http://localhost:8000/process", null, {
-        params: { user_input: input },
+        params: { 
+          user_input: input,
+          use_summarization: useSummarization
+        },
       });
 
       const answer =
@@ -147,7 +151,7 @@ export default function ChatBox() {
       </div>
 
       {/* Input area */}
-      <div className="flex items-center gap-4 p-4 bg-gray-50 rounded-2xl border-2 border-gray-200">
+      <div className="flex items-center gap-3 p-4 bg-gray-50 rounded-2xl border-2 border-gray-200">
         <input
           type="text"
           value={input}
@@ -157,6 +161,19 @@ export default function ChatBox() {
           className="flex-1 bg-transparent text-gray-800 placeholder-gray-500 focus:outline-none text-lg font-medium"
           placeholder="Type your message here..."
         />
+        
+        {/* Summarization Toggle */}
+        <button
+          onClick={() => setUseSummarization(!useSummarization)}
+          className={`px-4 py-2 rounded-xl font-bold text-sm transition-all duration-200 flex items-center gap-2 ${
+            useSummarization
+              ? "bg-gradient-to-r from-yellow-500 to-orange-500 text-white shadow-lg"
+              : "bg-gray-200 hover:bg-gray-300 text-gray-700"
+          }`}
+        >
+          <FileText className="w-4 h-4" />
+          Summarization
+        </button>
         
         <button
           onClick={handleSend}
