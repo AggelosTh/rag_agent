@@ -2,7 +2,7 @@ from sentence_transformers import SentenceTransformer
 
 ELASTICSEARCH_URL = "http://elasticsearch:9200"
 INDEX_NAME = "chunks"
-LLM_MODEL = "llama3:8b"
+LLM_MODEL = "llama3.1:8b"
 EMBEDDINGS_MODEL = "BAAI/bge-large-en"
 
 embeddings = SentenceTransformer(EMBEDDINGS_MODEL, device="cuda")
