@@ -42,7 +42,7 @@ Access the Ollama container and pull **Llama3.1:8B**:
 
 ```bash
 docker exec -it ollama_service bash
-ollama pull llama3:8b
+ollama pull llama3.1:8b
 ```
 
 ### 3. Run the Services
@@ -63,4 +63,5 @@ npm install framer-motion lucide-react axios
 npm install -D tailwindcss@3
 npx tailwindcss init -p
 npm start
+
 ```
