@@ -21,7 +21,7 @@ It allows you to **add documents**, **retrieve them via queries**, **summarize r
 - [FastAPI](https://fastapi.tiangolo.com/)
 - [LangGraph](https://www.langchain.com/langgraph)
 - [Elasticsearch](https://www.elastic.co/elasticsearch/)
-- [Ollama](https://ollama.ai/) with **Llama3:8B**
+- [Ollama](https://ollama.ai/) with **Llama3.1:8B**
 - [Docker Compose](https://docs.docker.com/compose/)
 
 ---
@@ -38,7 +38,7 @@ docker run --rm --gpus all nvidia/cuda:12.6.2-runtime-ubuntu22.04 nvidia-smi
 
 ### 2. Pull the Model
 
-Access the Ollama container and pull **Llama3:8B**:
+Access the Ollama container and pull **Llama3.1:8B**:
 
 ```bash
 docker exec -it ollama_service bash
@@ -53,4 +53,14 @@ Build and start the stack:
 docker compose up --build
 ```
 
----
+### 4. Set up the UI
+
+Navigate to the UI directory and install the dependencies:
+
+```bash
+cd rag-agent-ui
+npm install framer-motion lucide-react axios
+npm install -D tailwindcss@3
+npx tailwindcss init -p
+npm start
+```
