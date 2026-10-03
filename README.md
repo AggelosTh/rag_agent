@@ -12,7 +12,7 @@ It allows you to **add documents**, **retrieve them via queries**, **summarize r
 - Generate concise summaries of retrieved documents
 - Merge results for improved accuracy
 - Fully containerized with **Docker Compose**
-- ⚙Powered by **LangGraph**, **FastAPI**, and **Ollama (Llama3:8B)**
+- Powered by **LangGraph**, **FastAPI**, and **Ollama (Llama3.1:8B)**
 
 ---
 
